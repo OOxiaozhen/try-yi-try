@@ -55,127 +55,153 @@
     </div>
 
     <script>
+        // 获取画布元素和上下文
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+        // 获取分数显示元素
         const scoreElement = document.getElementById('score');
+        // 获取游戏结束显示元素
         const gameOverElement = document.getElementById('gameOver');
 
-        // Game variables
-        let snake = [{x: 200, y: 200}];
-        let direction = {x: 0, y: 0};
-        let food = {x: 100, y: 100};
-        let score = 0;
-        let gameSpeed = 100;
-        let gameInterval;
+        // 游戏变量
+        let snake = [{x: 200, y: 200}]; // 蛇的初始位置
+        let direction = {x: 0, y: 0}; // 蛇的初始移动方向
+        let food = {x: 100, y: 100}; // 食物的初始位置
+        let score = 0; // 初始分数
+        let gameSpeed = 100; // 游戏速度（毫秒）
+        let gameInterval; // 游戏循环定时器
 
-        // Initialize game
+        // 初始化游戏
         function initGame() {
+            // 重置蛇的位置和长度
             snake = [{x: 200, y: 200}];
+            // 重置移动方向
             direction = {x: 0, y: 0};
+            // 生成新的食物位置
             generateFood();
+            // 重置分数
             score = 0;
+            // 更新分数显示
             scoreElement.textContent = `Score: ${score}`;
+            // 隐藏游戏结束提示
             gameOverElement.style.display = 'none';
+            // 清除之前的游戏循环
             clearInterval(gameInterval);
+            // 启动新的游戏循环
             gameInterval = setInterval(gameLoop, gameSpeed);
         }
 
-        // Generate random food position
+        // 生成随机食物位置
         function generateFood() {
+            // 计算画布上可以放置食物的位置（20px为一个单位）
             food.x = Math.floor(Math.random() * (canvas.width / 20)) * 20;
             food.y = Math.floor(Math.random() * (canvas.height / 20)) * 20;
         }
 
-        // Game loop
+        // 游戏主循环
         function gameLoop() {
-            // Move snake
+            // 计算蛇头的新位置
             const head = {x: snake[0].x + direction.x, y: snake[0].y + direction.y};
+            // 将新蛇头添加到蛇的头部
             snake.unshift(head);
 
-            // Check if snake ate food
+            // 检查蛇是否吃到食物
             if (head.x === food.x && head.y === food.y) {
+                // 分数加1
                 score++;
+                // 更新分数显示
                 scoreElement.textContent = `Score: ${score}`;
+                // 生成新的食物
                 generateFood();
             } else {
+                // 如果没吃到食物，移除蛇尾（保持蛇的长度不变）
                 snake.pop();
             }
 
-            // Check collisions
+            // 检查碰撞
             if (checkCollision()) {
+                // 如果发生碰撞，游戏结束
                 gameOver();
                 return;
             }
 
-            // Draw game
+            // 绘制游戏画面
             draw();
         }
 
-        // Check for collisions
+        // 检查碰撞
         function checkCollision() {
             const head = snake[0];
             
-            // Wall collision
+            // 检查是否撞墙
             if (head.x < 0 || head.x >= canvas.width || head.y < 0 || head.y >= canvas.height) {
                 return true;
             }
             
-            // Self collision
+            // 检查是否撞到自己
             for (let i = 1; i < snake.length; i++) {
                 if (head.x === snake[i].x && head.y === snake[i].y) {
                     return true;
                 }
             }
             
+            // 没有碰撞
             return false;
         }
 
-        // Game over
+        // 游戏结束
         function gameOver() {
+            // 清除游戏循环
             clearInterval(gameInterval);
+            // 显示游戏结束提示
             gameOverElement.style.display = 'block';
         }
 
-        // Restart game
+        // 重新开始游戏
         function restartGame() {
+            // 调用初始化函数重新开始游戏
             initGame();
         }
 
-        // Draw game
+        // 绘制游戏画面
         function draw() {
-            // Clear canvas
+            // 清空画布
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Draw food
+            // 绘制食物（红色方块）
             ctx.fillStyle = 'red';
             ctx.fillRect(food.x, food.y, 20, 20);
             
-            // Draw snake
+            // 绘制蛇（绿色方块）
             ctx.fillStyle = 'green';
             snake.forEach(segment => {
                 ctx.fillRect(segment.x, segment.y, 20, 20);
             });
         }
 
-        // Handle keyboard input
+        // 处理键盘输入
         document.addEventListener('keydown', (e) => {
             switch(e.key) {
                 case 'ArrowUp':
+                    // 防止蛇向上移动时直接向下移动（避免180度转向）
                     if (direction.y !== 20) direction = {x: 0, y: -20};
                     break;
                 case 'ArrowDown':
+                    // 防止蛇向下移动时直接向上移动
                     if (direction.y !== -20) direction = {x: 0, y: 20};
                     break;
                 case 'ArrowLeft':
+                    // 防止蛇向左移动时直接向右移动
                     if (direction.x !== 20) direction = {x: -20, y: 0};
                     break;
                 case 'ArrowRight':
+                    // 防止蛇向右移动时直接向左移动
                     if (direction.x !== -20) direction = {x: 20, y: 0};
                     break;
             }
         });
 
-        // Start game
+        // 启动游戏
         initGame();
     </script>
 </body>
