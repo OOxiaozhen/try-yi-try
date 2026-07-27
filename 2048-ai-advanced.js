@@ -675,10 +675,14 @@
             return CONFIG.MIN_SEARCH_DEPTH;
         },
         
-        playerSearch(board, depth, alpha, beta, phase) {
+        playerSearch(board, depth, alpha, beta, phase, checkPaused) {
             this.nodesSearched++;
             
             if (Date.now() - this.searchStartTime > CONFIG.SEARCH_TIMEOUT_MS) {
+                this.timeoutReached = true;
+            }
+            
+            if (checkPaused && checkPaused()) {
                 this.timeoutReached = true;
             }
             
@@ -698,7 +702,7 @@
             }
             
             if (moves.length === 1) {
-                const result = this.chanceSearch(moves[0].board, depth - 1, alpha, beta, phase);
+                const result = this.chanceSearch(moves[0].board, depth - 1, alpha, beta, phase, checkPaused);
                 TranspositionTable.put(board, depth, true, result, moves[0].direction);
                 return result;
             }
@@ -711,7 +715,12 @@
             let bestDir = moves[0].direction;
             
             for (const move of moves) {
-                const score = this.chanceSearch(move.board, depth - 1, alpha, beta, phase);
+                if (checkPaused && checkPaused()) {
+                    this.timeoutReached = true;
+                    break;
+                }
+                
+                const score = this.chanceSearch(move.board, depth - 1, alpha, beta, phase, checkPaused);
                 if (score > bestScore) {
                     bestScore = score;
                     bestDir = move.direction;
@@ -732,10 +741,14 @@
             return bestScore;
         },
         
-        chanceSearch(board, depth, alpha, beta, phase) {
+        chanceSearch(board, depth, alpha, beta, phase, checkPaused) {
             this.nodesSearched++;
             
             if (Date.now() - this.searchStartTime > CONFIG.SEARCH_TIMEOUT_MS) {
+                this.timeoutReached = true;
+            }
+            
+            if (checkPaused && checkPaused()) {
                 this.timeoutReached = true;
             }
             
@@ -762,7 +775,7 @@
             for (const cell of sampled) {
                 for (const [value, prob] of [[2, 0.9], [4, 0.1]]) {
                     const newBoard = BoardOperations.addSpecificTile(board, cell.row, cell.col, value);
-                    const score = this.playerSearch(newBoard, depth - 1, alpha, beta, phase);
+                    const score = this.playerSearch(newBoard, depth - 1, alpha, beta, phase, checkPaused);
                     totalScore += score * prob / sampled.length;
                     probabilitySum += prob / sampled.length;
                     if (this.timeoutReached) break;
@@ -777,7 +790,7 @@
             return finalScore;
         },
         
-        getBestMove(board) {
+        getBestMove(board, checkPaused = null) {
             this.searchStartTime = Date.now();
             this.timeoutReached = false;
             this.nodesSearched = 0;
@@ -803,6 +816,10 @@
                 };
             }
             
+            if (checkPaused && checkPaused()) {
+                return null;
+            }
+            
             let bestScore = -Infinity;
             let bestDir = moves[0].direction;
             let evalScores = {};
@@ -810,7 +827,11 @@
             moves.sort((a, b) => BoardEvaluator.evaluate(b.board, phase) - BoardEvaluator.evaluate(a.board, phase));
             
             for (const move of moves) {
-                const score = this.chanceSearch(move.board, depth - 1, -Infinity, Infinity, phase);
+                if (checkPaused && checkPaused()) {
+                    break;
+                }
+                
+                const score = this.chanceSearch(move.board, depth - 1, -Infinity, Infinity, phase, checkPaused);
                 evalScores[move.direction] = score;
                 if (score > bestScore) {
                     bestScore = score;
@@ -1198,6 +1219,66 @@
             ControlPanel.setState('paused');
             this.stopRuntimeTimer();
             Logger.info('AI 已暂停');
+            this.setupNewGameDetection();
+        },
+        
+        newGameDetectionSetup: false,
+        
+        setupNewGameDetection() {
+            if (this.newGameDetectionSetup) return;
+            
+            const checkAndStart = () => {
+                if (!this.isPaused || this.shouldStop) {
+                    this.cleanupNewGameDetection();
+                    return;
+                }
+                
+                const board = GameReader.getBoard();
+                const tileCount = board.flat().filter(c => c > 0).length;
+                const gameOverElement = document.querySelector('.game-over');
+                
+                if (tileCount >= 2 && !gameOverElement) {
+                    Logger.info('🎮 检测到新游戏开始，自动恢复运行！');
+                    this.cleanupNewGameDetection();
+                    this.reset();
+                    this.isRunning = true;
+                    this.isPaused = false;
+                    this.startTime = Date.now();
+                    this.startRuntimeTimer();
+                    ControlPanel.setState('running');
+                    this.gameLoop();
+                }
+            };
+            
+            this.newGameInterval = setInterval(checkAndStart, 300);
+            
+            const clickHandler = (e) => {
+                const target = e.target;
+                const isRetryBtn = target.closest('.retry-button, .restart-button') ||
+                                  target.closest('a')?.textContent?.includes('Again') ||
+                                  target.closest('a')?.textContent?.includes('再来') ||
+                                  target.closest('a')?.textContent?.includes('New');
+                if (isRetryBtn && this.isPaused) {
+                    Logger.info('🔘 检测到新游戏按钮点击');
+                    setTimeout(checkAndStart, 200);
+                }
+            };
+            
+            document.addEventListener('click', clickHandler);
+            this.newGameClickHandler = clickHandler;
+            this.newGameDetectionSetup = true;
+        },
+        
+        cleanupNewGameDetection() {
+            if (this.newGameInterval) {
+                clearInterval(this.newGameInterval);
+                this.newGameInterval = null;
+            }
+            if (this.newGameClickHandler) {
+                document.removeEventListener('click', this.newGameClickHandler);
+                this.newGameClickHandler = null;
+            }
+            this.newGameDetectionSetup = false;
         },
         
         resume() {
@@ -1215,6 +1296,7 @@
             this.isPaused = false;
             this.waitForNewGame = false;
             this.stopRuntimeTimer();
+            this.cleanupNewGameDetection();
             DOMRecovery.stopWatching();
             ControlPanel.setState('stopped');
             Logger.info('AI 已停止');
@@ -1275,14 +1357,15 @@
         },
         
         async gameLoop() {
-            while (this.isRunning && !this.isPaused && !this.shouldStop) {
+            while (this.isRunning && !this.shouldStop) {
+                if (this.isPaused) {
+                    await this.delay(100);
+                    continue;
+                }
+                
                 try {
-                    if (this.waitForNewGame) {
-                        await this.delay(200);
-                        continue;
-                    }
-                    
                     if (GameReader.isVictory()) {
+                        if (this.isPaused) continue;
                         const continueBtn = GameReader.getContinueButton();
                         if (continueBtn) {
                             Logger.info('🎉 达到 2048！点击继续游戏...');
@@ -1292,17 +1375,18 @@
                     }
                     
                     if (GameReader.isGameOver()) {
-                        Logger.info('💀 游戏结束！已暂停，请点击"新游戏"开始下一局');
+                        Logger.info('💀 游戏结束！已暂停，等待您决定是否开始新游戏');
                         this.pause();
-                        const retryBtn = GameReader.getRetryButton();
-                        if (retryBtn) retryBtn.click();
-                        this.waitForNewGame = true;
                         break;
                     }
+                    
+                    if (this.isPaused) continue;
                     
                     const board = GameReader.getBoard();
                     const score = GameReader.getScore();
                     const maxTile = GameReader.getMaxTile(board);
+                    
+                    if (this.isPaused) continue;
                     
                     if (this.lastBoard && GameReader.boardEquals(board, this.lastBoard)) {
                         this.stuckCount++;
@@ -1323,6 +1407,8 @@
                     }
                     this.lastBoard = GameReader.cloneBoard(board);
                     
+                    if (this.isPaused) continue;
+                    
                     CycleDetector.add(board);
                     if (CycleDetector.isCycle()) {
                         Logger.warn('检测到循环移动，选择备选方案打破循环');
@@ -1335,14 +1421,20 @@
                         continue;
                     }
                     
+                    if (this.isPaused) continue;
+                    
                     ControlPanel.setState('thinking');
-                    const moveResult = Expectimax.getBestMove(board);
+                    const moveResult = Expectimax.getBestMove(board, () => this.isPaused);
                     ControlPanel.setState('running');
+                    
+                    if (this.isPaused) continue;
                     
                     if (!moveResult) {
                         await this.delay(100);
                         continue;
                     }
+                    
+                    if (this.isPaused) continue;
                     
                     this.currentMoveResult = moveResult;
                     await MoveSender.sendMove(moveResult.direction);
